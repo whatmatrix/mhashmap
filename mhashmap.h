@@ -360,7 +360,7 @@ public:
 				}
 				if (overflow->entries[0].first == mhashpage::unused_key) {
 					free(overflow);
-					overflow = nullptr;
+					page_[i].cxt.overflow = nullptr;
 				}
 			}
 		}
