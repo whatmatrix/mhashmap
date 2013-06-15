@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <algorithm>
 #include <functional>
 #include <utility>
@@ -48,7 +49,7 @@ struct mhashpage {
 		//uint32_t num_hash_elements;
 		uint32_t num_foreign_placed_elements;
 		uint32_t foreign_bitmap;
-		uint64_t padding;
+		mhashpage* overflow;
 	} cxt;
 	entry entries[(HASHPAGE_SIZE - sizeof(context)) / sizeof(entry)];
 	static const int num_max_entries = (HASHPAGE_SIZE - sizeof(context)) / sizeof(entry);
@@ -193,6 +194,7 @@ public:
 		capacity_ = 2;
 		num_entries_ = 0;
 		num_overflow_page_ = 0;
+		num_overflow_element_ = 0;
 		std::memset(page_, 0, sizeof(mhashpage) * 2);
 	}
 
@@ -201,6 +203,7 @@ public:
 		capacity_ = capacity;
 		num_entries_ = 0;
 		num_overflow_page_ = 0;
+		num_overflow_element_ = 0;
 		std::memset(page_, 0, sizeof(mhashpage) * capacity);
 	}
 
@@ -231,11 +234,16 @@ public:
 		}
 	}
 
+	int load_factor() const {
+		return num_entries_ * 1000LL / mhashpage::num_max_entries / capacity_;
+	}
+
 	void rebuild_or_rehash() {
-		uint64_t current_load = num_entries_ * 1000 / mhashpage::num_max_entries / capacity_;
+		uint64_t current_load = load_factor();
 		if (current_load > load_factor_) {
 			rebuild();
 		} else {
+			std::cout << "rehash" << std::endl;
 			rehash();
 		}
 	}
@@ -264,7 +272,7 @@ public:
 		rebuild_insert(evicted, h1, h2);
 	}
 
-	void rebuild_insert(mhashpage::entry evicted, uint32_t home_hash, uint32_t foreign_hash) {
+	bool rebuild_insert(mhashpage::entry& evicted, uint32_t home_hash, uint32_t foreign_hash) {
 		bool foreign = false;
 		bool success = false;
 		while (true) {
@@ -294,19 +302,34 @@ public:
 
 			if (!success) {
 				// Cannot succeeded within 20 retrial. Rebuild the hashmap.
+				if (insert_overflow_page(home_hash, evicted)) {
+					return true;
+				}
 				std::cout << "rebuild failed";
-				exit(-1);
+				return false;
 			}
-			return;
+			return true;
 		}
+		return true;
 	}
 
 	void rebuild() {
+		std::cout << "load factor : " << load_factor() << std::endl;
+		std::cout << "size : " << num_entries_ << std::endl;
+		std::cout << "capacity : " << capacity() << std::endl;
+
+		if (capacity() > 50000000) {
+			std::exit(-1);
+		}
+
 		int32_t old_capacity = capacity_;
 		capacity_ *= 2;
+		while (num_entries_ + num_overflow_element_ >= capacity_ * mhashpage::num_max_entries) {
+			capacity_ *= 2;
+		}
 
 		page_ = reinterpret_cast<mhashpage*>(realloc(page_, sizeof(mhashpage) * capacity_));
-		memset(&page_[old_capacity], 0, sizeof(mhashpage) * old_capacity);
+		memset(&page_[old_capacity], 0, sizeof(mhashpage) * (capacity_ - old_capacity));
 
 		for (int i = 0; i < old_capacity; ++i) {
 			page_[i].cxt.num_foreign_placed_elements = 0;
@@ -314,6 +337,29 @@ public:
 			for (int j = 0; j < mhashpage::num_max_entries; ++j) {
 				if (page_[i].entries[j].first != mhashpage::unused_key) {
 					rebuild_cuckcoo(i, j);
+				}
+			}
+			mhashpage* overflow = page_[i].cxt.overflow;
+			if (overflow) {
+				for (int j = 0; j < mhashpage::num_max_entries; ++j) {
+					if (overflow->entries[j].first != mhashpage::unused_key) {
+						uint32_t home_hash, foreign_hash;
+						compute_hash(overflow->entries[j].first, home_hash, foreign_hash);
+						if (page_[home_hash].insert(overflow->entries[j], false)) {
+							overflow->entries[j].first = mhashpage::unused_key;
+							--num_overflow_element_;
+							continue;
+						}
+						mhashpage::entry evicted = overflow->entries[j];
+						overflow->entries[j].first = mhashpage::unused_key;
+						--num_overflow_element_;
+						while (!rebuild_insert(evicted,  home_hash, foreign_hash)) {
+							rebuild();
+						}
+					}
+				}
+				if (overflow->entries[0].first == mhashpage::unused_key) {
+					free(overflow);
 				}
 			}
 		}
@@ -341,11 +387,11 @@ public:
 	}
 
 	void compute_hash(const key_t& key, uint32_t& h1, uint32_t& h2) {
-		//h1 = 0;
-		//h2 = 0;
-		//hashlittle2(&key, sizeof(key_t), &h1, &h2);
-		h1 = static_cast<uint32_t>(h1_(key, 0));
-		h2 = static_cast<uint32_t>(h1_(key, 1));
+		h1 = 0;
+		h2 = 0;
+		hashlittle2(&key, sizeof(key_t), &h1, &h2);
+		//h1 = static_cast<uint32_t>(h1_(key, 0));
+		//h2 = static_cast<uint32_t>(h1_(key, 1));
 		if (h1 == h2) {
 			h2 = ~h2;
 			if (h1 == h2) {
@@ -374,6 +420,21 @@ public:
 
 		h1 %= capacity_;
 		h2 %= capacity_;
+	}
+
+	bool insert_overflow_page(uint32_t home_hash, const mhashpage::entry& element) {
+		mhashpage* home = &page_[home_hash];
+		if (!home->cxt.overflow) {
+			home->cxt.overflow = reinterpret_cast<mhashpage*>(malloc(sizeof(mhashpage)));
+			memset(home->cxt.overflow, 0, sizeof(mhashpage));
+		}
+		if (home->cxt.overflow->full()) {
+			std::cout << "overflow insert fail" << std::endl;
+			return false;
+		}
+		home->cxt.overflow->insert(element, false);
+		++num_overflow_element_;
+		return true;
 	}
 
 	void insert(const mhashpage::entry& element) {
@@ -466,9 +527,11 @@ public:
 
 			if (!success) {
 				// Cannot succeeded within 20 retrial. Rebuild the hashmap.
-				rebuild_or_rehash();
-				compute_hash(evicted.first, home_hash, foreign_hash);
-				continue;
+				if (load_factor() >= load_factor_ || !insert_overflow_page(home_hash, evicted)) {
+					rebuild_or_rehash();
+					compute_hash(evicted.first, home_hash, foreign_hash);
+					continue;
+				}
 			}
 			++num_entries_;
 			return;
@@ -506,7 +569,7 @@ public:
 	}
 
 private:
-	static const int MAX_ITERATION = 10;
+	static const int MAX_ITERATION = 5;
 	// 75% occupancy
 	static const uint32_t load_factor_ = 750;
 
@@ -514,6 +577,7 @@ private:
 	int32_t num_entries_;
 	int32_t capacity_;
 	int32_t num_overflow_page_;
+	int32_t num_overflow_element_;
 	hash_function h1_;
 };
 

@@ -62,8 +62,6 @@ TEST(MHASHMAP, MegaInsert) {
 		m.insert(std::make_pair(i, 1000ULL + i));
 	}
 
-	m.debug_find(23409);
-
 	for (uint64_t i = 1; i < 1000000; ++i) {
 		mhashmap::iterator iter = m.find(i);
 		ASSERT_NE(m.end(), iter) << i << "-th element";
@@ -72,7 +70,38 @@ TEST(MHASHMAP, MegaInsert) {
 	}
 }
 
-const uint64_t kInsertIteration = 30000000;
+TEST(MHASHMAP, MegaRandomInsert) {
+	mhashmap m;
+	std::unordered_map<uint64_t, uint64_t> ref;
+
+	std::default_random_engine eng;
+	std::uniform_int_distribution<uint64_t> dist(1, std::numeric_limits<uint64_t>::max());	
+
+	const int kRandomInsertIteration = 10000000;
+	for (int i = 0; i < kRandomInsertIteration; ++i) {
+		uint64_t v = dist(eng);
+		uint64_t k = dist(eng);
+		ref.insert(std::make_pair(k, v));
+		m.insert(std::make_pair(k, v));
+	}
+
+	EXPECT_EQ(ref.size(), m.size());
+
+	int diff_count = 0;
+	for (auto& item : ref) {
+		mhashmap::iterator iter = m.find(item.first);
+		EXPECT_NE(m.end(), iter) << item.first;
+		if (m.end() != iter) {
+			EXPECT_EQ(item.first, iter->first);
+			EXPECT_EQ(item.second, iter->second);
+		} else {
+			++diff_count;
+		}
+	}
+	EXPECT_EQ(0, diff_count);
+}
+
+const uint64_t kInsertIteration = 20000000;
 
 size_t mega_capacity = 6291455;
 
@@ -84,8 +113,8 @@ TEST(MHASHMAP, MegaInsertBench) {
 	}
 	EXPECT_EQ(kInsertIteration - 1, m.size());
 	std::cout << "Capacity : " << m.capacity() / mhashpage::num_max_entries << std::endl;
-	std::cout << "Load Factor : " << m.size() * 1000 / m.capacity() << std::endl;
-	std::cout << "Overflow Rate : " << 100.0 * m.overflow_rate() / m.size() << "%" << std::endl;
+	std::cout << "Load Factor : " << m.load_factor() << std::endl;
+	std::cout << "Overflow Rate : " << 100.0 * m.overflow_rate() * mhashpage::num_max_entries / m.size() << "%" << std::endl;
 	mega_capacity = m.capacity() / mhashpage::num_max_entries;
 	std::cout << "Memory usage : " << m.capacity() / mhashpage::num_max_entries * sizeof(mhashpage) / 1024 / 1024 << " MB" << std::endl;
 }
