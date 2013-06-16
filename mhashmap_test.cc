@@ -99,6 +99,7 @@ TEST(MHASHMAP, MegaRandomInsert) {
 		}
 	}
 	EXPECT_EQ(0, diff_count);
+	std::cout << "Overflow Page Elements : " << m.overflow_page_element() << std::endl;
 }
 
 const uint64_t kInsertIteration = 20000000;
