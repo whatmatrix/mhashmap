@@ -32,8 +32,9 @@ inline void bitmap_assign(uint8_t& bm, uint32_t index, bool v) {
 	}
 }
 
-// TODO: insert optimization. insert with find. minimum evict.
-// realloc.
+// TODO: bitmap class
+// organize duplicated code
+// neat hash functions and being able to rehash.
 
 inline bool bitmap_test(uint8_t& bm, uint32_t index) {
 	return (bm & (1 << index)) > 0;
@@ -552,11 +553,6 @@ public:
 			}
 
 		} else {
-			if (home_page->cxt.overflow && insert_overflow_page(home_hash, element)) {
-				++num_entries_;
-				return;
-			}
-
 			mhashpage* foreign_page = &page_[foreign_hash];
 			if (foreign_page->insert(element, true)) {
 				++home_page->cxt.num_foreign_placed_elements;
@@ -588,12 +584,6 @@ public:
 						success = true;
 						break;
 					}
-					if (page_[home_hash].cxt.foreign_bitmap == 0 && page_[home_hash].cxt.overflow) {
-						if (insert_overflow_page(home_hash, evicted)) {
-							success = true;
-							break;
-						}
-					}
 				} else {
 					if (page_[foreign_hash].insert(evicted, true)) {
 						++page_[home_hash].cxt.num_foreign_placed_elements;
@@ -608,7 +598,7 @@ public:
 
 			if (!success) {
 				// Cannot succeeded within 20 retrial. Rebuild the hashmap.
-				if (load_factor() >= load_factor_ || !insert_overflow_page(home_hash, evicted)) {
+				if (!insert_overflow_page(home_hash, evicted) || load_factor() >= load_factor_) {
 					rebuild_or_rehash();
 					compute_hash(evicted.first, home_hash, foreign_hash);
 
