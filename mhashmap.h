@@ -24,8 +24,9 @@ struct hash_function {
 	std::hash<uint64_t> func;
 };
 
-// TODO: bitmap class
-// organize duplicated code
+// TODO:
+// foreign bitmap manipulation.
+// organize duplicated code. insert and reinsert, cuckoo.
 // neat hash functions and being able to rehash.
 
 struct bitmap_t {
@@ -129,6 +130,23 @@ struct mhashpage {
 		return cxt.used_bitmap.test(index);
 	}
 
+	bool can_evict_foreign() const {
+		return !cxt.foreign_bitmap.empty();
+	}
+
+	void evict_foreign(const entry& element, entry& evicted) {
+		int target;
+		for (int i = 0; i < mhashpage::num_max_entries; ++i) {
+			if (cxt.foreign_bitmap.test(i)) {
+				target = i;
+				break;
+			}
+		}
+		evicted = entries[target];
+		entries[target] = element;
+		cxt.foreign_bitmap.clear(target);
+	}
+
 	bool insert(const entry& element, bool foreign) {
 		if (full()) {
 			return false;
@@ -157,9 +175,8 @@ struct mhashpage {
 
 	void evict(entry& element, bool foreign, bool& foreign_evict, int count) {
 		int target;
-		if (cxt.foreign_bitmap.bm != 0) {
+		if (!cxt.foreign_bitmap.empty()) {
 			// evict random foreign element
-			target = -1;
 			for (int i = 0; i < num_max_entries; ++i) {
 				if (cxt.foreign_bitmap.test(i)) {
 					foreign_evict = true;
@@ -275,6 +292,8 @@ public:
 			return;
 		}
 		if (h2 == i) {
+			page_[h2].cxt.foreign_bitmap.set(j);
+			page_[h1].cxt.foreign_bitmap.clear(j);
 			if (h1 < old_capacity) {
 				++page_[h1].cxt.rehashing_num_foreign_placed_elements;
 			} else {
@@ -362,12 +381,34 @@ public:
 		capacity_ *= 2;
 	}
 
+	void rebuild_overflow_page(int32_t old_capacity, int i, mhashpage* overflow) {
+		for (int j = 0; j < mhashpage::num_max_entries; ++j) {
+			if (overflow->has(j)) {
+				uint32_t home_hash, foreign_hash;
+				compute_hash(overflow->entries[j].first, home_hash, foreign_hash);
+				if (page_[home_hash].insert(overflow->entries[j], false)) {
+					overflow->clear(j);
+					--num_overflow_element_;
+					continue;
+				}
+				mhashpage::entry evicted = overflow->entries[j];
+				overflow->clear(j);
+				--num_overflow_element_;
+				while (!rebuild_insert(old_capacity, evicted, home_hash, foreign_hash)) {
+					rebuild();
+					compute_hash(evicted.first, home_hash, foreign_hash);
+				}
+			}
+		}
+		if (overflow->cxt.used_bitmap.bm == 0) {
+			free(overflow);
+			page_[i].cxt.overflow = nullptr;
+			--num_overflow_page_;
+		}
+	}
+
 
 	void rebuild() {
-		//std::cout << "load factor : " << load_factor() << std::endl;
-		//std::cout << "size : " << num_entries_ << std::endl;
-		//std::cout << "capacity : " << capacity() << std::endl;
-
 		int32_t old_capacity = capacity_;
 
 		increment_capacity();
@@ -380,7 +421,6 @@ public:
 
 		for (int i = 0; i < old_capacity; ++i) {
 			page_[i].cxt.num_foreign_placed_elements = 0;
-			page_[i].cxt.foreign_bitmap.bm = 0;
 			if (page_[i].empty()) {
 				continue;
 			}
@@ -396,31 +436,7 @@ public:
 			}
 			mhashpage* overflow = page_[i].cxt.overflow;
 			if (overflow) {
-				for (int j = 0; j < mhashpage::num_max_entries; ++j) {
-					if (overflow->has(j)) {
-					//if (overflow->entries[j].first != mhashpage::unused_key) {
-						uint32_t home_hash, foreign_hash;
-						compute_hash(overflow->entries[j].first, home_hash, foreign_hash);
-						if (page_[home_hash].insert(overflow->entries[j], false)) {
-							overflow->clear(j);
-							--num_overflow_element_;
-							continue;
-						}
-						mhashpage::entry evicted = overflow->entries[j];
-						overflow->clear(j);
-						--num_overflow_element_;
-						while (!rebuild_insert(old_capacity, evicted, home_hash, foreign_hash)) {
-							rebuild();
-							compute_hash(evicted.first, home_hash, foreign_hash);
-						}
-					}
-				}
-				//if (overflow->entries[0].first == mhashpage::unused_key) {
-				if (overflow->cxt.used_bitmap.bm == 0) {
-					free(overflow);
-					page_[i].cxt.overflow = nullptr;
-					--num_overflow_page_;
-				}
+				rebuild_overflow_page(old_capacity, i, overflow);
 			}
 		}
 
@@ -429,21 +445,6 @@ public:
 			page_[i].cxt.rehashing_num_foreign_placed_elements = 0;
 		}
 
-	//	for (int i = 0; i < capacity_; ++i) {
-	//		for (int j = 0; j < mhashpage::num_max_entries; ++j) {
-	//			if (page_[i].entries[j].first != mhashpage::unused_key) {
-	//				uint32_t h1, h2;
-	//				compute_hash(page_[i].entries[j].first, h1, h2);
-	//#ifdef DEBUG
-	//				assert(i == h1 || i == h2);
-	//#endif
-	//				if (i == h2) {
-	//					bitmap_assign(page_[i].cxt.foreign_bitmap.bm, j, true);
-	//					++page_[h1].cxt.num_foreign_placed_elements;
-	//				}
-	//			}
-	//		}
-	//	}
 	}
 
 	void rehash() {
@@ -515,18 +516,8 @@ public:
 		}
 
 		mhashpage::entry evicted;
-		if (home_page->cxt.foreign_bitmap.bm != 0) {
-			int target;
-			for (int i = 0; i < mhashpage::num_max_entries; ++i) {
-				if (home_page->cxt.foreign_bitmap.test(i)) {
-					target = i;
-					break;
-				}
-			}
-			evicted = home_page->entries[target];
-			home_page->entries[target] = element;
-			home_page->cxt.foreign_bitmap.clear(target);
-
+		if (home_page->can_evict_foreign()) {
+			home_page->evict_foreign(element, evicted);
 			compute_hash(evicted.first, home_hash, foreign_hash);
 			home_page = &page_[home_hash];
 			--home_page->cxt.num_foreign_placed_elements;
@@ -535,7 +526,6 @@ public:
 				++num_entries_;
 				return;
 			}
-
 		} else {
 			mhashpage* foreign_page = &page_[foreign_hash];
 			if (foreign_page->insert(element, true)) {
@@ -581,7 +571,6 @@ public:
 			}
 
 			if (!success) {
-				// Cannot succeeded within 20 retrial. Rebuild the hashmap.
 				if (!insert_overflow_page(home_hash, evicted) || load_factor() >= load_factor_) {
 					rebuild_or_rehash();
 					compute_hash(evicted.first, home_hash, foreign_hash);
