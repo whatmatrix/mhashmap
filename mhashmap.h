@@ -24,7 +24,7 @@ struct hash_function {
 	std::hash<uint64_t> func;
 };
 
-inline void bitmap_assign(uint32_t& bm, uint32_t index, bool v) {
+inline void bitmap_assign(uint8_t& bm, uint32_t index, bool v) {
 	if (v) {
 		bm |= 1 << index;
 	} else {
@@ -35,7 +35,7 @@ inline void bitmap_assign(uint32_t& bm, uint32_t index, bool v) {
 // TODO: insert optimization. insert with find. minimum evict.
 // realloc.
 
-inline bool bitmap_test(uint32_t& bm, uint32_t index) {
+inline bool bitmap_test(uint8_t& bm, uint32_t index) {
 	return (bm & (1 << index)) > 0;
 }
 
@@ -47,8 +47,11 @@ struct mhashpage {
 	typedef std::pair<key_t, value_t> entry;
 	struct context {
 		//uint32_t num_hash_elements;
-		uint32_t num_foreign_placed_elements;
-		uint32_t foreign_bitmap;
+		uint16_t num_foreign_placed_elements;
+		uint16_t rehashing_num_foreign_placed_elements;
+		uint8_t used_bitmap;
+		uint8_t foreign_bitmap;
+		uint8_t padding0, padding1;
 		mhashpage* overflow;
 	} cxt;
 	entry entries[(HASHPAGE_SIZE - sizeof(context)) / sizeof(entry)];
@@ -218,7 +221,11 @@ public:
 				++num_overflow;
 			}
 		}
-		return num_overflow;
+		return num_overflow + num_overflow_element_;
+	}
+
+	size_t overflow_page_element() const {
+		return num_overflow_element_;
 	}
 
 	size_t capacity() const { return capacity_ * mhashpage::num_max_entries; }
@@ -243,17 +250,24 @@ public:
 		if (current_load > load_factor_) {
 			rebuild();
 		} else {
-			std::cout << "rehash" << std::endl;
+			//std::cout << "rehash" << std::endl;
 			rehash();
 		}
 	}
 
-	void rebuild_cuckcoo(int i, int j) {
+	void rebuild_cuckoo(int32_t old_capacity, int i, int j) {
 		uint32_t h1, h2;
 		compute_hash(page_[i].entries[j].first, h1, h2);
 
-		if (h1 == i || h2 == i) {
+		if (h1 == i) {
 			return;
+		}
+		if (h2 == i) {
+			if (h1 < old_capacity) {
+				++page_[h1].cxt.rehashing_num_foreign_placed_elements;
+			} else {
+				++page_[h1].cxt.num_foreign_placed_elements;
+			}
 		}
 
 		if (page_[h1].insert(page_[i].entries[j], false)) {
@@ -262,17 +276,21 @@ public:
 		}
 		if (page_[h2].insert(page_[i].entries[j], true)) {
 			page_[i].entries[j].first = mhashpage::unused_key;
-			++page_[h1].cxt.num_foreign_placed_elements;
+			if (h1 < old_capacity) { 
+				++page_[h1].cxt.rehashing_num_foreign_placed_elements;
+			} else {
+				++page_[h1].cxt.num_foreign_placed_elements;
+			}
 			return;
 		}
 
 		mhashpage::entry evicted = page_[i].entries[j];
 		page_[i].entries[j].first = mhashpage::unused_key;
 
-		rebuild_insert(evicted, h1, h2);
+		rebuild_insert(old_capacity, evicted, h1, h2);
 	}
 
-	bool rebuild_insert(mhashpage::entry& evicted, uint32_t home_hash, uint32_t foreign_hash) {
+	bool rebuild_insert(int32_t old_capacity, mhashpage::entry& evicted, uint32_t home_hash, uint32_t foreign_hash) {
 		bool foreign = false;
 		bool success = false;
 		while (true) {
@@ -282,6 +300,11 @@ public:
 
 				if (foreign) {
 					page_[foreign_hash].evict(evicted, foreign, foreign_evict, count);
+					if (home_hash < old_capacity) {
+						++page_[home_hash].cxt.rehashing_num_foreign_placed_elements;
+					} else {
+						++page_[home_hash].cxt.num_foreign_placed_elements;
+					}
 				} else {
 					page_[home_hash].evict(evicted, foreign, foreign_evict, count);
 				}
@@ -292,6 +315,7 @@ public:
 					break;
 				}
 				if (page_[foreign_hash].insert(evicted, true)) {
+					++page_[home_hash].cxt.rehashing_num_foreign_placed_elements;
 					success = true;
 					break;
 				}
@@ -305,7 +329,7 @@ public:
 				if (insert_overflow_page(home_hash, evicted)) {
 					return true;
 				}
-				std::cout << "rebuild failed";
+				//std::cout << "rebuild failed";
 				return false;
 			}
 			return true;
@@ -314,9 +338,9 @@ public:
 	}
 
 	void rebuild() {
-		std::cout << "load factor : " << load_factor() << std::endl;
-		std::cout << "size : " << num_entries_ << std::endl;
-		std::cout << "capacity : " << capacity() << std::endl;
+		//std::cout << "load factor : " << load_factor() << std::endl;
+		//std::cout << "size : " << num_entries_ << std::endl;
+		//std::cout << "capacity : " << capacity() << std::endl;
 
 		if (capacity() > 50000000) {
 			std::exit(-1);
@@ -336,7 +360,7 @@ public:
 			page_[i].cxt.foreign_bitmap = 0;
 			for (int j = 0; j < mhashpage::num_max_entries; ++j) {
 				if (page_[i].entries[j].first != mhashpage::unused_key) {
-					rebuild_cuckcoo(i, j);
+					rebuild_cuckoo(old_capacity, i, j);
 				}
 			}
 			mhashpage* overflow = page_[i].cxt.overflow;
@@ -353,7 +377,7 @@ public:
 						mhashpage::entry evicted = overflow->entries[j];
 						overflow->entries[j].first = mhashpage::unused_key;
 						--num_overflow_element_;
-						while (!rebuild_insert(evicted,  home_hash, foreign_hash)) {
+						while (!rebuild_insert(old_capacity, evicted,  home_hash, foreign_hash)) {
 							rebuild();
 						}
 					}
@@ -365,21 +389,26 @@ public:
 			}
 		}
 
-		for (int i = 0; i < capacity_; ++i) {
-			for (int j = 0; j < mhashpage::num_max_entries; ++j) {
-				if (page_[i].entries[j].first != mhashpage::unused_key) {
-					uint32_t h1, h2;
-					compute_hash(page_[i].entries[j].first, h1, h2);
-	#ifdef DEBUG
-					assert(i == h1 || i == h2);
-	#endif
-					if (i == h2) {
-						bitmap_assign(page_[i].cxt.foreign_bitmap, j, true);
-						++page_[h1].cxt.num_foreign_placed_elements;
-					}
-				}
-			}
+		for (int i = 0; i < old_capacity; ++i) {
+			page_[i].cxt.num_foreign_placed_elements = page_[i].cxt.rehashing_num_foreign_placed_elements;
+			page_[i].cxt.rehashing_num_foreign_placed_elements = 0;
 		}
+
+	//	for (int i = 0; i < capacity_; ++i) {
+	//		for (int j = 0; j < mhashpage::num_max_entries; ++j) {
+	//			if (page_[i].entries[j].first != mhashpage::unused_key) {
+	//				uint32_t h1, h2;
+	//				compute_hash(page_[i].entries[j].first, h1, h2);
+	//#ifdef DEBUG
+	//				assert(i == h1 || i == h2);
+	//#endif
+	//				if (i == h2) {
+	//					bitmap_assign(page_[i].cxt.foreign_bitmap, j, true);
+	//					++page_[h1].cxt.num_foreign_placed_elements;
+	//				}
+	//			}
+	//		}
+	//	}
 	}
 
 	void rehash() {
@@ -570,7 +599,7 @@ public:
 	}
 
 private:
-	static const int MAX_ITERATION = 5;
+	static const int MAX_ITERATION = 10;
 	// 75% occupancy
 	static const uint32_t load_factor_ = 750;
 

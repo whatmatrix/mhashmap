@@ -115,6 +115,7 @@ TEST(MHASHMAP, MegaInsertBench) {
 	std::cout << "Capacity : " << m.capacity() / mhashpage::num_max_entries << std::endl;
 	std::cout << "Load Factor : " << m.load_factor() << std::endl;
 	std::cout << "Overflow Rate : " << 100.0 * m.overflow_rate() * mhashpage::num_max_entries / m.size() << "%" << std::endl;
+	std::cout << "# items in the overflow page : " << m.overflow_page_element() << std::endl;
 	mega_capacity = m.capacity() / mhashpage::num_max_entries;
 	std::cout << "Memory usage : " << m.capacity() / mhashpage::num_max_entries * sizeof(mhashpage) / 1024 / 1024 << " MB" << std::endl;
 }
