@@ -194,7 +194,7 @@ struct mhashpage {
 
 };
 
-// TODO: STL conformity. iterator should have first and second instead of key() and value().
+// TODO: STL conformity.
 // 8 byte key and 8 byte value
 class mhashmap {
 public:
@@ -240,7 +240,7 @@ public:
 	}
 
 	~mhashmap() {
-		delete[] page_;
+		free(page_);
 	}
 
 	size_t overflow_rate() const {
@@ -276,6 +276,7 @@ public:
 
 	void rebuild_or_rehash() {
 		uint64_t current_load = load_factor();
+		std::cout << "current load : " << current_load << " capacity : " << capacity_ << std::endl;
 		if (current_load > load_factor_) {
 			rebuild();
 		} else {
@@ -369,7 +370,7 @@ public:
 				if (insert_overflow_page(home_hash, evicted)) {
 					return true;
 				}
-				//std::cout << "rebuild failed";
+				std::cout << "rebuild failed";
 				return false;
 			}
 			return true;
@@ -395,7 +396,7 @@ public:
 				overflow->clear(j);
 				--num_overflow_element_;
 				while (!rebuild_insert(old_capacity, evicted, home_hash, foreign_hash)) {
-					rebuild();
+					rebuild_or_rehash();
 					compute_hash(evicted.first, home_hash, foreign_hash);
 				}
 			}
@@ -460,15 +461,12 @@ public:
 		////h2 = static_cast<uint32_t>(h1_(key, 1));
 		//h1 = (key + 343741) * 1203804 % 99981599 ;
 		h2 = (key + 7438125) * 571723 % 999815601;
-		if (h1 == h2) {
-			h2 = ~h2;
-			if (h1 == h2) {
-				++h2;
-			}
-		}
-
 		h1 %= capacity_;
 		h2 %= capacity_;
+
+		if (h1 == h2) {
+			h2 = (h2 + 1) % capacity_;
+		}
 	}
 
 	bool insert_overflow_page(uint32_t home_hash, const mhashpage::entry& element) {
@@ -478,7 +476,7 @@ public:
 			home->cxt.overflow = reinterpret_cast<mhashpage*>(malloc(sizeof(mhashpage)));
 			memset(home->cxt.overflow, 0, sizeof(mhashpage));
 		} else if (home->cxt.overflow->full()) {
-			//std::cout << "overflow insert fail" << std::endl;
+			std::cout << "overflow insert fail" << std::endl;
 			return false;
 		}
 		home->cxt.overflow->insert(element, false);
@@ -571,7 +569,7 @@ public:
 			}
 
 			if (!success) {
-				if (!insert_overflow_page(home_hash, evicted) || load_factor() >= load_factor_) {
+				if (!insert_overflow_page(home_hash, evicted) && load_factor() >= load_factor_) {
 					rebuild_or_rehash();
 					compute_hash(evicted.first, home_hash, foreign_hash);
 
