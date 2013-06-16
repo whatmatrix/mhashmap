@@ -24,21 +24,36 @@ struct hash_function {
 	std::hash<uint64_t> func;
 };
 
-inline void bitmap_assign(uint8_t& bm, uint32_t index, bool v) {
-	if (v) {
-		bm |= 1 << index;
-	} else {
-		bm &= ~(static_cast<uint8_t>(1) << index);
-	}
-}
-
 // TODO: bitmap class
 // organize duplicated code
 // neat hash functions and being able to rehash.
 
-inline bool bitmap_test(uint8_t& bm, uint32_t index) {
-	return (bm & (1 << index)) > 0;
-}
+struct bitmap_t {
+	void assign(int index, bool v) {
+		if (v) {
+			set(index);
+		} else {
+			clear(index);
+		}
+	}
+
+	void set(int index) {
+		bm |= static_cast<uint8_t>(1) << index;
+	}
+
+	void clear(int index) {
+		bm &= ~(static_cast<uint8_t>(1) << index);
+	}
+
+	bool test(int index) const {
+		return (bm & (static_cast<uint8_t>(1) << index)) > 0;
+	}
+
+	bool empty() const {
+		return bm == 0;
+	}
+	uint8_t bm;
+};
 
 struct mhashpage {
 	typedef uint64_t key_t;
@@ -50,8 +65,8 @@ struct mhashpage {
 		//uint32_t num_hash_elements;
 		uint16_t num_foreign_placed_elements;
 		uint16_t rehashing_num_foreign_placed_elements;
-		uint8_t used_bitmap;
-		uint8_t foreign_bitmap;
+		bitmap_t used_bitmap;
+		bitmap_t foreign_bitmap;
 		uint8_t padding0, padding1;
 		mhashpage* overflow;
 	} cxt;
@@ -74,7 +89,7 @@ struct mhashpage {
 
 	bool full() const {
 		//return cxt.num_elements == num_max_entries;
-		return cxt.used_bitmap == 0x7f;
+		return cxt.used_bitmap.bm == 0x7f;
 		//for (const entry& e : entries) {
 		//	if (e.first == unused_key) {
 		//		return false;
@@ -83,8 +98,12 @@ struct mhashpage {
 		//return true;
 	}
 
+	bool empty() const {
+		return cxt.used_bitmap.empty();
+	}
+
 	entry* find(const key_t& k) {
-		if (cxt.used_bitmap == 0) {
+		if (cxt.used_bitmap.bm == 0) {
 			return nullptr;
 		}
 		//for (int i = 0; i < cxt.num_elements; ++i) {
@@ -94,7 +113,7 @@ struct mhashpage {
 		//}
 		for (int i = 0; i < num_max_entries; ++i) {
 			if (entries[i].first == k) {
-				if (bitmap_test(cxt.used_bitmap, i)) {
+				if (cxt.used_bitmap.test(i)) {
 					return &entries[i];
 				}
 			}
@@ -102,89 +121,58 @@ struct mhashpage {
 		return nullptr;
 	}
 
+	void clear(int index) {
+		cxt.used_bitmap.clear(index);
+	}
+
+	bool has(int index) const {
+		return cxt.used_bitmap.test(index);
+	}
+
 	bool insert(const entry& element, bool foreign) {
-		check_bitmap();
 		if (full()) {
 			return false;
 		}
 
-		//bitmap_assign(cxt.foreign_bitmap, cxt.num_elements, foreign);
+		//bitmap_assign(cxt.foreign_bitmap.bm, cxt.num_elements, foreign);
 		//entries[cxt.num_elements++] = element;
 		//++cxt.num_hash_elements;
 		//return true;
 
 		for (int i = 0; i < num_max_entries; ++i) {
-			if (!bitmap_test(cxt.used_bitmap, i)) {
+			if (!cxt.used_bitmap.test(i)) {
 			//if (entries[i].first == unused_key) {
 				// should move
 				//assert(entries[i].first == unused_key);
-				//assert(!bitmap_test(cxt.used_bitmap, i));
+				//assert(!bitmap_test(cxt.used_bitmap.bm, i));
 				entries[i] = element;
-				bitmap_assign(cxt.used_bitmap, i, true);
-				bitmap_assign(cxt.foreign_bitmap, i, foreign);
+				cxt.used_bitmap.set(i);
+				cxt.foreign_bitmap.assign(i, foreign);
 
-				check_bitmap();
 				return true;
 			}
 		}
 		return false;
 	}
 
-	void check_bitmap() {
-		//for (int i = 0; i < num_max_entries; ++i) {
-		//	assert(entries[i].first != unused_key || !bitmap_test(cxt.used_bitmap, i));
-		//	assert(entries[i].first == unused_key || bitmap_test(cxt.used_bitmap, i));
-		//}
-	}
-
 	void evict(entry& element, bool foreign, bool& foreign_evict, int count) {
-		check_bitmap();
-		//if (cxt.foreign_bitmap != 0) {
-		//	// evict random foreign element
-		//	for (int i = 0; i < cxt.num_elements; ++i) {
-		//		if (bitmap_test(cxt.foreign_bitmap, i)) {
-		//			std::swap(entries[i], element);
-		//			bitmap_assign(cxt.foreign_bitmap, i, foreign);
-		//			foreign_evict = true;
-		//			return;
-		//		}
-		//	}
-		//} else {
-		//	const int target = 0;
-		//	std::swap(entries[target], element);
-		//	bitmap_assign(cxt.foreign_bitmap, target, foreign);
-		//	foreign_evict = false;
-		//	++cxt.num_foreign_placed_elements;
-		//	return;
-		//}
-
 		int target;
-		if (cxt.foreign_bitmap != 0) {
+		if (cxt.foreign_bitmap.bm != 0) {
 			// evict random foreign element
 			target = -1;
 			for (int i = 0; i < num_max_entries; ++i) {
-				if (bitmap_test(cxt.foreign_bitmap, i)) {
+				if (cxt.foreign_bitmap.test(i)) {
 					foreign_evict = true;
 					target = i;
 					break;
 				}
 			}
-#ifdef DEBUG
-			if (target == -1) {
-				throw "error";
-			}
-#endif
 		} else {
 			target = count % num_max_entries;
 			foreign_evict = false;
 		}
-		uint8_t old_bitmap = cxt.used_bitmap;
-		check_bitmap();
 		std::swap(entries[target], element);
-		//assert(entries[target].first != unused_key);
-		bitmap_assign(cxt.foreign_bitmap, target, foreign);
-
-		check_bitmap();
+		cxt.foreign_bitmap.assign(target, foreign);
 	}
 
 };
@@ -295,12 +283,12 @@ public:
 		}
 
 		if (page_[h1].insert(page_[i].entries[j], false)) {
-			bitmap_assign(page_[i].cxt.used_bitmap, j, false);
+			page_[i].clear(j);
 			//page_[i].entries[j].first = mhashpage::unused_key;
 			return;
 		}
 		if (page_[h2].insert(page_[i].entries[j], true)) {
-			bitmap_assign(page_[i].cxt.used_bitmap, j, false);
+			page_[i].clear(j);
 			//page_[i].entries[j].first = mhashpage::unused_key;
 			if (h1 < old_capacity) { 
 				++page_[h1].cxt.rehashing_num_foreign_placed_elements;
@@ -311,8 +299,7 @@ public:
 		}
 
 		mhashpage::entry evicted = page_[i].entries[j];
-		page_[i].entries[j].first = mhashpage::unused_key;
-		bitmap_assign(page_[i].cxt.used_bitmap, j, false);
+		page_[i].clear(j);
 
 		while (!rebuild_insert(old_capacity, evicted, h1, h2)) {
 			rebuild_or_rehash();
@@ -393,16 +380,15 @@ public:
 
 		for (int i = 0; i < old_capacity; ++i) {
 			page_[i].cxt.num_foreign_placed_elements = 0;
-			page_[i].cxt.foreign_bitmap = 0;
-			if (page_[i].cxt.used_bitmap == 0) {
+			page_[i].cxt.foreign_bitmap.bm = 0;
+			if (page_[i].empty()) {
 				continue;
 			}
-			uint64_t chk = page_[i].cxt.used_bitmap;
+			uint64_t chk = page_[i].cxt.used_bitmap.bm;
 			uint64_t checker = 1;
 			for (int j = 0; j < mhashpage::num_max_entries; ++j) {
-				page_[i].check_bitmap();
 				if ((chk & checker) == checker) {
-				//if (bitmap_test(page_[i].cxt.used_bitmap, j)) {
+				//if (bitmap_test(page_[i].cxt.used_bitmap.bm, j)) {
 				//if (page_[i].entries[j].first != mhashpage::unused_key) {
 					rebuild_cuckoo(old_capacity, i, j);
 				}
@@ -411,19 +397,17 @@ public:
 			mhashpage* overflow = page_[i].cxt.overflow;
 			if (overflow) {
 				for (int j = 0; j < mhashpage::num_max_entries; ++j) {
-					if (bitmap_test(overflow->cxt.used_bitmap, j)) {
+					if (overflow->has(j)) {
 					//if (overflow->entries[j].first != mhashpage::unused_key) {
 						uint32_t home_hash, foreign_hash;
 						compute_hash(overflow->entries[j].first, home_hash, foreign_hash);
 						if (page_[home_hash].insert(overflow->entries[j], false)) {
-							//overflow->entries[j].first = mhashpage::unused_key;
-							bitmap_assign(overflow->cxt.used_bitmap, j, false);
+							overflow->clear(j);
 							--num_overflow_element_;
 							continue;
 						}
 						mhashpage::entry evicted = overflow->entries[j];
-						//overflow->entries[j].first = mhashpage::unused_key;
-						bitmap_assign(overflow->cxt.used_bitmap, j, false);
+						overflow->clear(j);
 						--num_overflow_element_;
 						while (!rebuild_insert(old_capacity, evicted, home_hash, foreign_hash)) {
 							rebuild();
@@ -432,7 +416,7 @@ public:
 					}
 				}
 				//if (overflow->entries[0].first == mhashpage::unused_key) {
-				if (overflow->cxt.used_bitmap == 0) {
+				if (overflow->cxt.used_bitmap.bm == 0) {
 					free(overflow);
 					page_[i].cxt.overflow = nullptr;
 					--num_overflow_page_;
@@ -454,7 +438,7 @@ public:
 	//				assert(i == h1 || i == h2);
 	//#endif
 	//				if (i == h2) {
-	//					bitmap_assign(page_[i].cxt.foreign_bitmap, j, true);
+	//					bitmap_assign(page_[i].cxt.foreign_bitmap.bm, j, true);
 	//					++page_[h1].cxt.num_foreign_placed_elements;
 	//				}
 	//			}
@@ -531,17 +515,17 @@ public:
 		}
 
 		mhashpage::entry evicted;
-		if (home_page->cxt.foreign_bitmap != 0) {
+		if (home_page->cxt.foreign_bitmap.bm != 0) {
 			int target;
 			for (int i = 0; i < mhashpage::num_max_entries; ++i) {
-				if (bitmap_test(home_page->cxt.foreign_bitmap, i)) {
+				if (home_page->cxt.foreign_bitmap.test(i)) {
 					target = i;
 					break;
 				}
 			}
 			evicted = home_page->entries[target];
 			home_page->entries[target] = element;
-			bitmap_assign(home_page->cxt.foreign_bitmap, target, false);
+			home_page->cxt.foreign_bitmap.clear(target);
 
 			compute_hash(evicted.first, home_hash, foreign_hash);
 			home_page = &page_[home_hash];

@@ -121,6 +121,26 @@ TEST(MHASHMAP, MegaInsertBench) {
 	std::cout << "Memory usage : " << m.capacity() / mhashpage::num_max_entries * sizeof(mhashpage) / 1024 / 1024 << " MB" << std::endl;
 }
 
+TEST(MHASHMAP, MegaRandomInsertBench) {
+	mhashmap m;
+	std::unordered_map<uint64_t, uint64_t> ref;
+
+	std::default_random_engine eng;
+	std::uniform_int_distribution<uint64_t> dist(1, std::numeric_limits<uint64_t>::max());	
+
+	const int kRandomInsertIteration = 10000000;
+	for (int i = 0; i < kRandomInsertIteration; ++i) {
+		uint64_t v = dist(eng);
+		uint64_t k = dist(eng);
+		ref.insert(std::make_pair(k, v));
+		m.insert(std::make_pair(k, v));
+	}
+
+	EXPECT_EQ(ref.size(), m.size());
+
+	std::cout << "Overflow Page Elements : " << m.overflow_page_element() << std::endl;
+}
+
 TEST(MHASHMAP, MegaLookupBench) {
 	mhashmap m;
 
