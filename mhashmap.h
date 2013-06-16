@@ -220,6 +220,7 @@ public:
 		num_entries_ = 0;
 		num_overflow_page_ = 0;
 		num_overflow_element_ = 0;
+		last_increment_ = 0;
 		std::memset(page_, 0, sizeof(mhashpage) * 2);
 	}
 
@@ -369,19 +370,21 @@ public:
 		return true;
 	}
 
+	void increment_capacity() {
+		capacity_ *= 2;
+	}
+
+
 	void rebuild() {
 		//std::cout << "load factor : " << load_factor() << std::endl;
 		//std::cout << "size : " << num_entries_ << std::endl;
 		//std::cout << "capacity : " << capacity() << std::endl;
 
-		if (capacity() > 50000000) {
-			std::exit(-1);
-		}
-
 		int32_t old_capacity = capacity_;
-		capacity_ *= 2;
+
+		increment_capacity();
 		while (num_entries_ + num_overflow_element_ >= capacity_ * mhashpage::num_max_entries) {
-			capacity_ *= 2;
+			increment_capacity();
 		}
 
 		page_ = reinterpret_cast<mhashpage*>(realloc(page_, sizeof(mhashpage) * capacity_));
@@ -467,36 +470,16 @@ public:
 		//h1 = 0;
 		//h2 = 0;
 		//hashlittle2(&key, sizeof(key_t), &h1, &h2);
-		////h1 = static_cast<uint32_t>(h1_(key, 0));
+		h1 = static_cast<uint32_t>(h1_(key, 0));
 		////h2 = static_cast<uint32_t>(h1_(key, 1));
-		//if (h1 == h2) {
-		//	h2 = ~h2;
-		//	if (h1 == h2) {
-		//		++h2;
-		//	}
-		//}
-
-		h1 = (key + 343741) * 1203804 % 99981599 ;
-		h2 = (key + 571237) * 571723 % 999815601;
-		h1 %= capacity_;
-		h2 %= capacity_;
-	}
-
-	void compute_four_hash(const key_t& key, uint32_t& h1, uint32_t& h2, uint32_t& old_h1, uint32_t& old_h2) {
-		//h1 = 0;
-		//h2 = 0;
-		//hashlittle2(&key, sizeof(key_t), &h1, &h2);
-		h1 = h1_(key, 0);
-		h2 = h1_(key, 1);
+		//h1 = (key + 343741) * 1203804 % 99981599 ;
+		h2 = (key + 7438125) * 571723 % 999815601;
 		if (h1 == h2) {
 			h2 = ~h2;
 			if (h1 == h2) {
 				++h2;
 			}
 		}
-
-		old_h1 = h1 % (capacity_ / 2);
-		old_h2 = h2 % (capacity_ / 2);
 
 		h1 %= capacity_;
 		h2 %= capacity_;
@@ -567,7 +550,13 @@ public:
 				++num_entries_;
 				return;
 			}
+
 		} else {
+			if (home_page->cxt.overflow && insert_overflow_page(home_hash, element)) {
+				++num_entries_;
+				return;
+			}
+
 			mhashpage* foreign_page = &page_[foreign_hash];
 			if (foreign_page->insert(element, true)) {
 				++home_page->cxt.num_foreign_placed_elements;
@@ -598,6 +587,12 @@ public:
 					if (page_[home_hash].insert(evicted, false)) {
 						success = true;
 						break;
+					}
+					if (page_[home_hash].cxt.foreign_bitmap == 0 && page_[home_hash].cxt.overflow) {
+						if (insert_overflow_page(home_hash, evicted)) {
+							success = true;
+							break;
+						}
 					}
 				} else {
 					if (page_[foreign_hash].insert(evicted, true)) {
@@ -675,6 +670,7 @@ private:
 	int32_t capacity_;
 	int32_t num_overflow_page_;
 	int32_t num_overflow_element_;
+	int32_t last_increment_;
 	hash_function h1_;
 };
 
