@@ -236,7 +236,7 @@ public:
 
 	void set_capacity_mask() {
 		uint32_t mask = capacity_ - 1;
-		float* f_mask = reinterpret_cast<uint32_t*>(&mask);
+		float* f_mask = reinterpret_cast<float*>(&mask);
 		__m128 m = _mm_set_ps1(*f_mask);
 		capacity_mask_ = *reinterpret_cast<__m128i*>(&m);
 	}
