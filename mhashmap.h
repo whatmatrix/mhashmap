@@ -14,8 +14,6 @@
 
 #include "lookup3.h"
 
-#include <intrin.h>
-
 #define HASHPAGE_SIZE 128
 
 struct hash_function {
