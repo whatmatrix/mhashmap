@@ -14,7 +14,7 @@
 
 #include "lookup3.h"
 
-#include <xmmintrin.h>
+#include <smmintrin.h>
 
 #define HASHPAGE_SIZE 128
 
