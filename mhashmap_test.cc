@@ -43,11 +43,11 @@ TEST(MHASHMAP, SimpleInsertAndFind) {
 TEST(MHASHMAP, Rebuild) {
 	mhashmap m;
 
-	for (uint64_t i = 1; i < 10; ++i) {
+	for (uint64_t i = 1; i < 9000; ++i) {
 		m.insert(std::make_pair(i, 1000ULL + i));
 	}
 
-	for (uint64_t i = 1; i < 10; ++i) {
+	for (uint64_t i = 1; i < 9000; ++i) {
 		mhashmap::iterator iter = m.find(i);
 		ASSERT_NE(m.end(), iter) << i << "-th element";
 		EXPECT_EQ(i, iter->first);
@@ -58,11 +58,17 @@ TEST(MHASHMAP, Rebuild) {
 TEST(MHASHMAP, MegaInsert) {
 	mhashmap m;
 
-	for (uint64_t i = 1; i < 1000000; ++i) {
+#ifdef _DEBUG
+	const uint64_t kInsertIteration = 10000;
+#else
+	const uint64_t kInsertIteration = 1000000;
+#endif 
+
+	for (uint64_t i = 1; i < kInsertIteration; ++i) {
 		m.insert(std::make_pair(i, 1000ULL + i));
 	}
 
-	for (uint64_t i = 1; i < 1000000; ++i) {
+	for (uint64_t i = 1; i < kInsertIteration; ++i) {
 		mhashmap::iterator iter = m.find(i);
 		ASSERT_NE(m.end(), iter) << i << "-th element";
 		EXPECT_EQ(i, iter->first);
@@ -99,7 +105,6 @@ TEST(MHASHMAP, MegaRandomInsert) {
 		}
 	}
 	EXPECT_EQ(0, diff_count);
-	std::cout << "Overflow Page Elements : " << m.overflow_page_element() << std::endl;
 }
 
 const uint64_t kInsertIteration = 20000000;
@@ -116,7 +121,9 @@ TEST(MHASHMAP, MegaInsertBench) {
 	std::cout << "Capacity : " << m.capacity() / mhashpage::num_max_entries << std::endl;
 	std::cout << "Load Factor : " << m.load_factor() << std::endl;
 	std::cout << "Overflow Rate : " << 100.0 * m.overflow_rate() * mhashpage::num_max_entries / m.size() << "%" << std::endl;
-	std::cout << "# items in the overflow page : " << m.overflow_page_element() << std::endl;
+	for (int i = 0; i < mhashpage::kMaxLevel; ++i) {
+		std::cout << "Overflow Rate " << i << " level : " << 100.0 * m.overflow_rate(i) * mhashpage::num_max_entries / m.size() << "%" << std::endl;
+	}
 	mega_capacity = m.capacity() / mhashpage::num_max_entries;
 	std::cout << "Memory usage : " << m.capacity() / mhashpage::num_max_entries * sizeof(mhashpage) / 1024 / 1024 << " MB" << std::endl;
 }
@@ -138,7 +145,6 @@ TEST(MHASHMAP, MegaRandomInsertBench) {
 
 	EXPECT_EQ(ref.size(), m.size());
 
-	std::cout << "Overflow Page Elements : " << m.overflow_page_element() << std::endl;
 }
 
 TEST(MHASHMAP, MegaLookupBench) {
