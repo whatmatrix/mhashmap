@@ -306,8 +306,8 @@ public:
 	void compute_hash(const key_t& key, hash_array_t h) {
 		h[0] = static_cast<uint32_t>(h1_(key, 0));
 		h[1] = (key + 7438125) * 571723 % 999815601;
-		//h[2] = h[0] + 1;
-		//h[3] = h[1] + 1;
+		h[2] = 0;
+		h[3] = 0;
 		hashlittle2(&key, sizeof(key_t), &h[2], &h[3]);
 
 		if (h[0] == h[1]) {
