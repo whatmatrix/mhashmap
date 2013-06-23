@@ -418,8 +418,12 @@ public:
 	}
 
 	void insert(const mhashpage::entry_t& element) {
-		hash_array_t key_hash;
 
+		if (load_factor() > load_factor_) {
+			rebuild_or_rehash();
+		}
+
+		hash_array_t key_hash;
 		compute_hash(element.first, key_hash);
 
 		mhashpage::entry_t* entry = find_internal(element.first, key_hash);
@@ -450,10 +454,10 @@ public:
 	}
 
 private:
-	static const int MAX_ITERATION = 10;
+	static const int MAX_ITERATION = 5;
 
 	// 70% occupancy
-	static const uint32_t load_factor_ = 800;
+	static const uint32_t load_factor_ = 700;
 
 	void init(int32_t capacity) {
 		page_ = reinterpret_cast<mhashpage*>(malloc(sizeof(mhashpage) * capacity));
