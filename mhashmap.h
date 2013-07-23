@@ -14,7 +14,7 @@
 
 #include "lookup3.h"
 
-#include <xmmintrin.h>
+#include <smmintrin.h>
 
 #define HASHPAGE_SIZE 128
 
@@ -236,7 +236,9 @@ public:
 
 	void set_capacity_mask() {
 		uint32_t mask = capacity_ - 1;
-		capacity_mask_ = *reinterpret_cast<__m128i*>(&_mm_set_ps1(*reinterpret_cast<float*>(&mask)));
+		float* f_mask = reinterpret_cast<float*>(&mask);
+		__m128 m = _mm_set_ps1(*f_mask);
+		capacity_mask_ = *reinterpret_cast<__m128i*>(&m);
 	}
 
 	int load_factor() const {
@@ -315,8 +317,9 @@ public:
 
 	void compute_hash(const key_t& key, hash_array_t& h) {
 		uint32_t k = key;
-		h = *reinterpret_cast<__m128i*>(&_mm_set_ps1(*reinterpret_cast<float*>(&k)));
-
+		float* f_k = reinterpret_cast<float*>(&k);
+		__m128 m = _mm_set_ps1(*f_k);
+		h = *reinterpret_cast<__m128i*>(&m);
 		h = _mm_add_epi32(h, hash_add_);
 		h = _mm_mullo_epi32(h, hash_mult_);
 		h = _mm_and_si128(h, capacity_mask_);

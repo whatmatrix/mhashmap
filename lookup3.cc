@@ -46,6 +46,7 @@ on 1 byte), but shoehorning those bytes into integers efficiently is messy.
 #ifdef linux
 # include <endian.h>    /* attempt to define endianness */
 #endif
+#include <cstddef>
 
 /*
  * My best guess at if you are big-endian or little-endian.  This may
@@ -70,6 +71,8 @@ on 1 byte), but shoehorning those bytes into integers efficiently is messy.
 #define hashsize(n) ((uint32_t)1<<(n))
 #define hashmask(n) (hashsize(n)-1)
 #define rot(x,k) (((x)<<(k)) | ((x)>>(32-(k))))
+
+using std::size_t;
 
 /*
 -------------------------------------------------------------------------------
